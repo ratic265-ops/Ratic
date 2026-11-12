@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#101a17">
+<title>RATIC WAR 3D</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101a17;color:#f4f7ef;font-family:system-ui,Arial;touch-action:none}
+#game{position:fixed;inset:0;width:100%;height:100%;display:block}
+#hud{position:fixed;top:9px;left:9px;right:9px;display:flex;justify-content:space-between;gap:5px;pointer-events:none;flex-wrap:wrap}
+.pill{background:#101a1ddd;border:1px solid #ffffff30;border-radius:11px;padding:7px 9px;font-size:11px;font-weight:800;text-shadow:0 1px 2px #000}
+#menu{position:fixed;inset:0;background:#07100edb;display:grid;place-items:center;padding:18px}
+.panel{width:min(92vw,440px);max-height:92vh;overflow:auto;background:#14211ff5;border:1px solid #ffffff38;border-radius:20px;padding:20px;box-shadow:0 20px 70px #0009}
+h1{font-size:32px;letter-spacing:3px;margin:0;color:#c7ef62}h2{margin:6px 0 12px;font-size:18px}
+p{color:#cbd5d0;font-size:13px;line-height:1.45}
+button,select{font:800 14px system-ui;border:0;border-radius:12px;padding:12px;background:#c7ef62;color:#17200c}
+button{cursor:pointer}.secondary{background:#2a3b35;color:#fff;border:1px solid #ffffff35}
+.row{display:flex;gap:8px;margin-top:10px}.row>*{flex:1}
+#controls{position:fixed;left:14px;right:14px;bottom:15px;display:flex;align-items:end;justify-content:space-between;pointer-events:none}
+#stick{width:126px;height:126px;border:2px solid #ffffff55;border-radius:50%;background:#ffffff1c;position:relative;pointer-events:auto;touch-action:none}
+#nub{position:absolute;width:48px;height:48px;left:37px;top:37px;border-radius:50%;background:#d5ef91c9;border:2px solid #fff9}
+#fire{width:88px;height:88px;border-radius:50%;background:#d4ef83dd;border:3px solid #fff9;pointer-events:auto;touch-action:none}
+#reload{position:fixed;right:22px;bottom:116px;pointer-events:auto;background:#182821dd;color:white;border:1px solid #ffffff55;padding:10px 13px}
+#hint{position:fixed;bottom:155px;left:50%;transform:translateX(-50%);font-size:11px;color:#fff;text-shadow:0 2px 3px #000;white-space:nowrap}
+#toast{position:fixed;top:65px;left:50%;transform:translateX(-50%);background:#101a1ddd;padding:8px 12px;border-radius:10px;font-size:12px;display:none}
+@media(min-width:800px){#controls{max-width:760px;left:50%;transform:translateX(-50%)}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud"><div class="pill">RATIC WAR 3D</div><div class="pill" id="classHud">ASALTO</div><div class="pill" id="scoreHud">PUNTOS 0</div><div class="pill" id="hpHud">VIDA 100</div><div class="pill" id="ammoHud">CARGA 24/24</div></div>
+<div id="hint">Joystick izquierdo: moverse · DISPARAR: lanzar pulso · RECARGAR: cargar</div>
+<button id="reload">RECARGAR</button>
+<div id="controls"><div id="stick"><div id="nub"></div></div><button id="fire">DISPARAR</button></div>
+<div id="toast"></div>
+<div id="menu"><div class="panel">
+<h1>RATIC WAR 3D</h1><h2>Arena táctica en 3D</h2>
+<p>Ahora puedes recorrer una arena tridimensional, ver a tu personaje y enfrentarte a drones ficticios de entrenamiento. Elige una clase y juega desde el navegador de tu celular.</p>
+<label for="classPick">ELIGE TU CLASE</label><div class="row"><select id="classPick"><option>Asalto</option><option>Médico</option><option>Explorador</option><option>Ingeniero</option><option>Francotirador</option></select></div>
+<div class="row"><button id="play">JUGAR</button><button class="secondary" id="how">CONTROLES</button></div>
+<p id="info">Prototipo 3D · Un jugador · Controles táctiles</p>
+<p><b>Nota:</b> esta versión usa gráficos 3D en tiempo real. El multijugador online y los APK/IPA publicados requieren servidores y compilación adicional. Se necesita conexión a internet para cargar el motor 3D.</p>
+</div></div>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+const $=id=>document.getElementById(id);
+const canvas=$('game');
+let renderer,scene,camera,clock,player,arena,enemies=[],shots=[],score=0,hp=100,ammo=24,maxAmmo=24,wave=1,playing=false,className='Asalto',lastShot=0,lastSpawn=0,move={x:0,y:0},firing=false,keys={},yaw=0;
+function toast(s){$('toast').textContent=s;$('toast').style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').style.display='none',1300)}
+function stats(){$('scoreHud').textContent='PUNTOS '+score;$('hpHud').textContent='VIDA '+Math.max(0,Math.ceil(hp));$('ammoHud').textContent='CARGA '+ammo+'/'+maxAmmo;$('classHud').textContent=className.toUpperCase()}
+function mat(color,rough=.85){return new THREE.MeshStandardMaterial({color,roughness:rough})}
+function box(w,h,d,color,x,y,z){let m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(color));m.position.set(x,y,z);scene.add(m);return m}
+function makeSoldier(){
+ const g=new THREE.Group();
+ const dark=mat(0x263a2d),armor=mat(0x596b49),skin=mat(0xb99570),black=mat(0x17201b);
+ let torso=new THREE.Mesh(new THREE.BoxGeometry(.72,.9,.42),armor);torso.position.y=1.35;g.add(torso);
+ let head=new THREE.Mesh(new THREE.SphereGeometry(.23,12,10),skin);head.position.y=2.02;g.add(head);
+ let helmet=new THREE.Mesh(new THREE.SphereGeometry(.26,12,8,0,Math.PI*2,0,Math.PI/2),dark);helmet.position.y=2.1;g.add(helmet);
+ for(let side of [-1,1]){let arm=new THREE.Mesh(new THREE.BoxGeometry(.22,.75,.24),dark);arm.position.set(side*.48,1.38,0);arm.rotation.z=side*-.12;g.add(arm);let leg=new THREE.Mesh(new THREE.BoxGeometry(.27,.75,.3),dark);leg.position.set(side*.2,.48,0);g.add(leg)}
+ let pack=new THREE.Mesh(new THREE.BoxGeometry(.5,.65,.2),dark);pack.position.set(0,1.4,-.29);g.add(pack);
+ let tool=new THREE.Mesh(new THREE.BoxGeometry(.13,.13,.95),black);tool.position.set(.28,1.35,.55);g.add(tool);
+ return g;
+}
+function build(){
+ scene=new THREE.Scene();scene.background=new THREE.Color(0x9aab9a);scene.fog=new THREE.Fog(0x9aab9a,22,65);
+ camera=new THREE.PerspectiveCamera(68,innerWidth/innerHeight,.1,120);
+ renderer=new THREE.WebGLRenderer({canvas,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+ scene.add(new THREE.HemisphereLight(0xdce8ff,0x3c4934,2.1));
+ let sun=new THREE.DirectionalLight(0xffedcf,2.2);sun.position.set(-12,22,10);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);scene.add(sun);
+ let ground=new THREE.Mesh(new THREE.PlaneGeometry(100,100),mat(0x52634a));ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
+ let grid=new THREE.GridHelper(100,50,0x9cae83,0x7b8d6d);grid.position.y=.012;scene.add(grid);
+ // Training arena props: barriers, crates, towers and rocks
+ for(let i=0;i<18;i++){let a=i*Math.PI*2/18,r=18+(i%3)*2,x=Math.cos(a)*r,z=Math.sin(a)*r;let h=1.4+(i%4)*.35;let o=box(2.2,h,1.2,i%2?0x566348:0x6b7157,x,h/2,z);o.castShadow=true;o.receiveShadow=true}
+ for(let i=0;i<13;i++){let x=(Math.random()-.5)*27,z=(Math.random()-.5)*27;if(Math.hypot(x,z)<7)continue;let crate=box(1.2,1.1,1.2,0x66553c,x,.55,z);crate.rotation.y=Math.random()*Math.PI;crate.castShadow=true}
+ // distant simple hills
+ for(let i=0;i<10;i++){let rock=new THREE.Mesh(new THREE.DodecahedronGeometry(3+Math.random()*3,1),mat(0x65745a));rock.position.set((Math.random()-.5)*65,-1.5,-25-Math.random()*20);rock.scale.y=.55;scene.add(rock)}
+ player=makeSoldier();player.position.set(0,0,0);scene.add(player);
+}
+function spawn(){let a=Math.random()*Math.PI*2,d=17+Math.random()*8,x=player.position.x+Math.sin(a)*d,z=player.position.z+Math.cos(a)*d;let g=new THREE.Group();let body=new THREE.Mesh(new THREE.SphereGeometry(.58,12,10),mat(0x9a8053));body.position.y=.65;g.add(body);let dome=new THREE.Mesh(new THREE.SphereGeometry(.35,12,8),mat(0x4c5640));dome.position.y=1.22;g.add(dome);let eye=new THREE.Mesh(new THREE.SphereGeometry(.09,8,8),mat(0xe5e86d));eye.position.set(0,1.24,.31);g.add(eye);g.position.set(x,0,z);scene.add(g);enemies.push({g,h:2,s:.9+Math.random()*.45})}
+function start(){className=$('classPick').value;score=0;hp=className==='Médico'?120:100;maxAmmo=className==='Asalto'?24:className==='Francotirador'?8:18;ammo=maxAmmo;wave=1;enemies.forEach(e=>scene.remove(e.g));enemies=[];shots.forEach(s=>scene.remove(s.mesh));shots=[];player.position.set(0,0,0);playing=true;$('menu').style.display='none';for(let i=0;i<5;i++)spawn();stats();clock.start();animate()}
+function reload(){ammo=maxAmmo;stats();toast('Recarga completada')}
+function shoot(){if(!playing||ammo<=0)return;let now=performance.now(),delay=className==='Francotirador'?650:260;if(now-lastShot<delay)return;lastShot=now;ammo--;let dir=new THREE.Vector3();camera.getWorldDirection(dir);dir.y=0;dir.normalize();let origin=player.position.clone().add(new THREE.Vector3(0,1.35,0)).add(dir.clone().multiplyScalar(.8));let mesh=new THREE.Mesh(new THREE.SphereGeometry(.12,8,8),new THREE.MeshBasicMaterial({color:0xdfff75}));mesh.position.copy(origin);scene.add(mesh);shots.push({mesh,dir,life:2.2});stats()}
+function animate(){if(!playing)return;requestAnimationFrame(animate);let dt=Math.min(clock.getDelta(),.04);
+ let mx=move.x+(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0),mz=move.y+(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0),len=Math.hypot(mx,mz)||1;
+ if(mx||mz){let speed=className==='Explorador'?7:className==='Francotirador'?4.6:5.6;let dx=mx/len,dz=mz/len;player.position.x+=dx*speed*dt;player.position.z+=dz*speed*dt;yaw=Math.atan2(dx,dz);player.rotation.y=yaw}
+ if(firing)shoot();
+ let desired=new THREE.Vector3(player.position.x+Math.sin(yaw)*7,5.2,player.position.z+Math.cos(yaw)*7);camera.position.lerp(desired,1-Math.pow(.001,dt));camera.lookAt(player.position.x,1.1,player.position.z);
+ for(let i=enemies.length-1;i>=0;i--){let e=enemies[i],v=new THREE.Vector3(player.position.x-e.g.position.x,0,player.position.z-e.g.position.z),d=v.length();if(d>.01){v.normalize();e.g.position.addScaledVector(v,e.s*dt);e.g.rotation.y=Math.atan2(v.x,v.z)}if(d<1.25){hp-=10*dt;if(hp<=0){gameOver();return}}}
+ for(let i=shots.length-1;i>=0;i--){let s=shots[i];s.mesh.position.addScaledVector(s.dir,22*dt);s.life-=dt;let hit=false;for(let j=enemies.length-1;j>=0;j--){let e=enemies[j];if(s.mesh.position.distanceTo(e.g.position.clone().add(new THREE.Vector3(0,.8,0)))<.85){e.h--;hit=true;if(e.h<=0){scene.remove(e.g);enemies.splice(j,1);score+=100}break}}if(hit||s.life<=0){scene.remove(s.mesh);shots.splice(i,1)}}
+ if(performance.now()-lastSpawn>2200&&enemies.length<5+wave){spawn();lastSpawn=performance.now()}
+ if(score>=wave*500){wave++;toast('¡Oleada '+wave+'!');spawn();spawn()}
+ stats();renderer.render(scene,camera)
+}
+function gameOver(){playing=false;$('menu').style.display='grid';$('play').textContent='VOLVER A JUGAR';$('info').textContent='Fin de partida · Puntos: '+score+' · Oleada: '+wave}
+$('play').onclick=start;$('how').onclick=()=>toast('Joystick: moverte · Disparar: pulsos · Recargar: munición');
+$('reload').onclick=reload;
+const stick=$('stick'),nub=$('nub');let pid=null;
+function setMove(e){let r=stick.getBoundingClientRect(),dx=e.clientX-(r.left+r.width/2),dy=e.clientY-(r.top+r.height/2),l=Math.hypot(dx,dy),m=38;if(l>m){dx=dx/l*m;dy=dy/l*m}move.x=dx/m;move.y=dy/m;nub.style.transform=`translate(${dx}px,${dy}px)`}
+stick.addEventListener('pointerdown',e=>{pid=e.pointerId;stick.setPointerCapture(pid);setMove(e)});stick.addEventListener('pointermove',e=>{if(e.pointerId===pid)setMove(e)});
+function reset(){pid=null;move={x:0,y:0};nub.style.transform='translate(0,0)'}stick.addEventListener('pointerup',reset);stick.addEventListener('pointercancel',reset);
+$('fire').addEventListener('pointerdown',e=>{firing=true;$('fire').setPointerCapture(e.pointerId)});$('fire').addEventListener('pointerup',()=>firing=false);$('fire').addEventListener('pointercancel',()=>firing=false);
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key===' ')firing=true;if(e.key.toLowerCase()==='r')reload()});addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;if(e.key===' ')firing=false});
+addEventListener('resize',()=>{if(renderer&&camera){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)}});
+try{build()}catch(e){$('info').textContent='No se pudo iniciar el motor 3D. Comprueba tu conexión e inténtalo de nuevo.';console.error(e)}
+})();
+</script>
+</body></html>
